@@ -22,13 +22,14 @@ process FETCH_SRA {
     """
 }
 
-// 2. Raw QC
-process FASTQC_RAW {
+// 2. FastQC process
+process FASTQC {
     tag "$sample_id"
     conda 'bioconda::fastqc=0.12.1'
-    publishDir "${params.outdir}/qc_raw", mode: 'copy'
+    publishDir "${params.outdir}/qc_${reads_type}", mode: 'copy'
 
     input:
+    val reads_type
     tuple val(sample_id), path(reads)
 
     output:
@@ -61,22 +62,14 @@ process TRIMMOMATIC {
     """
 }
 
-// 4. Trimmed QC
-process FASTQC_TRIMMED {
-    tag "$sample_id"
-    conda 'bioconda::fastqc=0.12.1'
-    publishDir "${params.outdir}/qc_trimmed", mode: 'copy'
-
-    input:
-    tuple val(sample_id), path(reads)
-
-    output:
-    path "*_fastqc.{zip,html}"
-
-    script:
-    """
-    fastqc -t ${task.cpus} -q ${reads[0]} ${reads[1]}
-    """
+// 4. Named workflow like in the lecture example
+workflow TRIMMED_QC_WF {
+    take:
+        reads
+    main:
+        FASTQC('trimmed', reads)
+    emit:
+        FASTQC.out
 }
 
 // 5. De novo assembly (if no reference is provided)
@@ -169,9 +162,9 @@ workflow {
     }
 
     // 2 & 3 & 4. QC and trimming
-    FASTQC_RAW(raw_reads_ch)
+    FASTQC('raw', raw_reads_ch)
     trimmed_reads_ch = TRIMMOMATIC(raw_reads_ch)
-    FASTQC_TRIMMED(trimmed_reads_ch)
+    TRIMMED_QC_WF(trimmed_reads_ch)
 
     // 5. Reference assembly
     if (params.reference) {
