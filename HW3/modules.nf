@@ -106,22 +106,6 @@ process MAP_READS {
     """
 }
 
-// NEW: 7. Variant calling from nf-core
-process BCFTOOLS_CALL {
-    tag "$sample_id"
-    conda 'bioconda::bcftools=1.19'
-    container 'quay.io/biocontainers/bcftools:1.19--h8b2538c_0'
-    publishDir "${params.outdir}/variants", mode: 'copy'
-
-    input: tuple val(sample_id), path(bam), path(reference)
-    output: tuple val(sample_id), path("${sample_id}_variants.vcf")
-
-    script:
-    """
-    bcftools mpileup -Ou -f $reference $bam | bcftools call -mv -Ov -o ${sample_id}_variants.vcf
-    """
-}
-
 // 8. Plots (now both for coverage and variants!)
 process PLOT_STATS {
     tag "$sample_id"
@@ -134,12 +118,13 @@ process PLOT_STATS {
     output: 
     tuple val(sample_id), path("${sample_id}_coverage.png"), path("${sample_id}_variants.png"), path("${sample_id}_depth.txt")
 
-    script:
+script:
     """
-    samtools depth $bam > ${sample_id}_depth.txt
+    samtools depth ${bam} > ${sample_id}_depth.txt
 
     cat <<EOF > plot_data.py
     import matplotlib.pyplot as plt
+    import gzip
 
     # 1. Plot coverage
     depths = []
@@ -159,11 +144,12 @@ process PLOT_STATS {
 
     # 2. Plot variants coordinates
     variant_positions = []
-    with open("${vcf}") as f:
+    
+    with gzip.open("${vcf}", "rt") as f:
         for line in f:
             # Skip VCF header lines
             if not line.startswith('#'):
-                parts = line.split('\\t')
+                parts = line.split('\t')
                 variant_positions.append(int(parts[1]))
 
     plt.figure(figsize=(12, 2))
@@ -176,7 +162,7 @@ process PLOT_STATS {
 
     if depths:
         plt.xlim(0, len(depths))
-        
+
     plt.tight_layout()
     plt.savefig('${sample_id}_variants.png', dpi=300)
     EOF
