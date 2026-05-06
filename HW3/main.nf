@@ -40,18 +40,17 @@ workflow {
     // 4. Mapping
     bam_ref_ch = MAP_READS(mapping_in_ch)
 
-    // 5. Variant Calling (The nf-core way)
+    // 5. Variant calling (The nf-core way)
     ch_split = bam_ref_ch.multiMap { sample_id, bam, reference -> 
         bam_input:   tuple( [id: sample_id, single_end: false], bam, [], [] ) 
         fasta_input: tuple( [id: 'reference'], reference, [] )
         plot_input:  tuple( sample_id, bam )
     }
 
-    // Run mpileup (This now runs mpileup + call + view automatically!)
+    // Run mpileup
     mpileup_out = BCFTOOLS_MPILEUP(ch_split.bam_input, ch_split.fasta_input.first(), false)
 
-    // 6. Coverage & Variant Plotting
-    // We grab the .vcf.gz output directly from the mpileup process
+    // 6. Coverage and variant plotting
     clean_vcf_ch = mpileup_out.vcf.map { meta, vcf -> tuple(meta.id, vcf) }
     
     plot_in_ch = ch_split.plot_input.join(clean_vcf_ch)
