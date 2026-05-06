@@ -1,7 +1,10 @@
 nextflow.enable.dsl=2
 
-// Import processes and workflows from modules file
-include { FETCH_SRA; FASTQC; TRIMMOMATIC; TRIMMED_QC_WF; FETCH_REFERENCE; SPADES; MAP_READS; PLOT_STATS; BCFTOOLS_CALL } from './modules.nf'
+// Import processes and workflows from modules file and nf-core
+include { FETCH_SRA; FASTQC; TRIMMOMATIC; TRIMMED_QC_WF; FETCH_REFERENCE; SPADES; MAP_READS; PLOT_STATS } from './modules.nf'
+
+include { BCFTOOLS_MPILEUP } from './modules/nf-core/bcftools/mpileup/main'
+include { BCFTOOLS_CALL } from './modules/nf-core/bcftools/call/main'
 
 workflow {
     
@@ -19,7 +22,7 @@ workflow {
     trimmed_reads_ch = TRIMMOMATIC(raw_reads_ch)
     TRIMMED_QC_WF(trimmed_reads_ch)
 
-// 3. Reference assignment, ncbi download, or assembly
+    // 3. Reference assignment, ncbi download, or assembly
     if (params.reference) {
         // Option A: provided local FASTA file
         ref_ch = Channel.fromPath(params.reference, checkIfExists: true).first()
@@ -34,18 +37,23 @@ workflow {
         mapping_in_ch = trimmed_reads_ch.join(assembly_ch)
     }
 
-    // 4. Mapping, output: [sample_id, bam, reference]
+    // 4. Mapping
     bam_ref_ch = MAP_READS(mapping_in_ch)
 
-    // 5. Variant Calling, output: [sample_id, vcf]
-    vcf_ch = BCFTOOLS_CALL(bam_ref_ch)
+    // 5. Variant Calling (The nf-core way)
+    ch_split = bam_ref_ch.multiMap { sample_id, bam, reference -> 
+        bam_input:   tuple( [id: sample_id, single_end: false], bam, [], [] ) 
+        fasta_input: tuple( [id: 'reference'], reference, [] )
+        plot_input:  tuple( sample_id, bam )
+    }
 
-    // 6. Plotting the results (coverage & variants)
-    bam_only_ch = bam_ref_ch.map { sample_id, bam, reference -> tuple(sample_id, bam) }
+    // Run mpileup (This now runs mpileup + call + view automatically!)
+    mpileup_out = BCFTOOLS_MPILEUP(ch_split.bam_input, ch_split.fasta_input.first(), false)
+
+    // 6. Coverage & Variant Plotting
+    // We grab the .vcf.gz output directly from the mpileup process
+    clean_vcf_ch = mpileup_out.vcf.map { meta, vcf -> tuple(meta.id, vcf) }
     
-    // Using .join() to combine the BAM and VCF channels based on the sample_id key, output: [sample_id, bam, vcf]
-    plot_in_ch = bam_only_ch.join(vcf_ch)
-    
-    // Pass the combined channel to the plotting process
+    plot_in_ch = ch_split.plot_input.join(clean_vcf_ch)
     PLOT_STATS(plot_in_ch)
 }
